@@ -1,0 +1,121 @@
+---
+title: "workflow Fonctionnement"
+author: "Pâquarse Delvich Van Mahouvi"
+date: "15/03/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr ::opts_chunk$set(comment=NA)
+```
+
+# chargement des packages
+
+```{r}
+library(tidyverse)
+library(rsample)
+library(kknn)
+library(yardstick)
+library(data.table)
+library(tidymodels)
+```
+
+
+```{r}
+gen_class_bin2D <- function(n=100,graine=1234,bayes=0.1){
+  set.seed(graine)
+  grille <- 0.1
+  X1 <- runif(n)
+  X2 <- runif(n)
+  Y <- rep(0,n)
+  cond0 <- (X1>0.2 & X2>=0.8) | (X1>0.6 & X2<0.4) | (X1<0.25 & X2<0.5)
+  cond1 <- !cond0
+  Y[cond0] <- rbinom(sum(cond0),1,bayes)
+  Y[cond1] <- rbinom(sum(cond1),1,1-bayes)
+  donnees <- tibble(X1,X2,Y=as.factor(Y))
+#  indapp <- 1:napp
+#  dapp <- donnees[indapp,]
+#  dtest <- donnees[-indapp,]
+  
+  px1 <- seq(0,1,by=grille)
+  px2 <- seq(0,1,by=grille)
+  px <- expand.grid(X1=px1,X2=px2)
+  py <- rep(0,nrow(px))
+  cond0 <- (px[,1]>0.2 & px[,2]>=0.8) | (px[,1]>0.6 & px[,2]<0.4) | (px[,1]<0.25 & px[,2]<0.5)
+  cond1 <- !cond0
+  py[cond0] <- 0
+  py[cond1] <- 1
+  df <- px %>% as_tibble() %>% mutate(Y=as.factor(py))
+  p <- ggplot(df)+aes(x=X1,y=X2,fill=Y)+geom_raster(hjust=1,vjust=1)#+theme(legend.position='none')
+  return(list(donnees=donnees,graphe=p))
+}
+donnees <- gen_class_bin2D(n=500,graine=12345,bayes=0.20)$donnees
+head(donnees)
+ggplot(donnees)+aes(x=X1,y=X2,color=Y)+geom_point()
+```
+
+-   Spécification du modele 
+
+```{r}
+tune_spec <-
+  nearest_neighbor(neighbors = tune(), weight_func = "rectangular")%>%
+  set_mode("classification")%>%
+  set_engine("kknn")
+```
+
+-   Création du workflow
+
+```{r}
+ppc_wf <- workflow()%>%
+  add_model(tune_spec)%>%
+  add_formula(Y ~ .)
+```
+
+
+-   Les paramètres
+
+```{r}
+grille.k <- tibble(neighbors = 1:10)
+kfold <- vfold_cv(donnees, v = 10) 
+```
+
+-   Calibrer le modèle 
+
+```{r}
+ppc.cv <- ppc_wf%>%
+  tune_grid(
+    resamples = kfold, 
+    grid = grille.k,
+    metrics = metric_set(roc_auc)
+    )
+```
+
+
+```{r}
+tbl <- ppc.cv %>% collect_metrics()
+```
+
+
+```{r}
+ppc.cv%>%show_best()
+ggplot(tbl) +
+  aes(x = neighbors, y = mean) +
+  geom_line(size = 0.5, colour = "#112446") +
+  theme_minimal()
+```
+
+
+```{r}
+ppc.cv%>%select_best()
+```
+
+
+```{r}
+ppc.final <- ppc_wf%>%
+  finalize_workflow()
+```
+
+
+
+

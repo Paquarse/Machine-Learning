@@ -1,0 +1,190 @@
+---
+title: "Partie Arbre Machine Learning"
+author: "Pâquarse Delvich Van Mahouvi"
+date: "23/03/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr ::opts_chunk$set(comment=NA)
+```
+
+
+```{r}
+library(ggplot2)
+
+```
+
+Une arbre, c'est une fonction constante par morceau
+
+3.1.1 Arbres de régression
+Chargement des données
+
+
+```{r}
+n <- 50
+set.seed(1234)
+X <- runif(n)
+set.seed(5678)
+Y <- 1*X*(X<=0.6)+(-1*X+3.2)*(X>0.6)+rnorm(n,sd=0.1)
+data1 <- data.frame(X,Y)
+ggplot(data1)+aes(x=X,y=Y)+geom_point()
+```
+
+
+```{r}
+library(rpart)
+tree <- rpart(Y~X, data=data1)
+```
+
+
+```{r}
+library(rpart.plot)
+rpart.plot(tree)
+```
+
+
+Le premier noeud est le noeud racine, c'est le noeud qui contient toutes les observations. A l'intérieur on a 100% des observations. Dans ça on va prédire 1.1 (c'est la moyenne des Y : soit mean(data1$Y)). On coupe de telle sorte que les informations à l'intérieur de chaque groupe soit le plus homogene possible. Pour cela, on trouve un seuil s qui permet d'optimiser l'impureté de chaque groupe. La totalité des données sont regroupés a 62% dans le groupe 1 et 38% dans le second. Et les valeurs prédictes pour chaque groupe sont respectivement 0.31 et 2.4. L'impurete du groupe est calculé par la variance au sein du groupe. 
+
+3. Ecriture de l'algo 
+
+```{r}
+fonction_x <- function(x) {
+  if(x < 0.58){
+    y <- 0.31} else {
+      y <- 2.4}
+  return(y)
+}
+```
+
+```{r}
+fonction_x(0.6)
+```
+# 3.1.2 Arbres de classification
+
+```{r}
+n <- 50
+set.seed(12345)
+X1 <- runif(n)
+set.seed(5678)
+X2 <- runif(n)
+Y <- rep(0,n)
+set.seed(54321)
+Y[X1<=0.45] <- rbinom(sum(X1<=0.45),1,0.85)
+set.seed(52432)
+Y[X1>0.45] <- rbinom(sum(X1>0.45),1,0.15)
+data2 <- data.frame(X1,X2,Y)
+ggplot(data2)+aes(x=X1,y=X2,color=Y)+geom_point(size=2)+scale_x_continuous(name="")+
+  scale_y_continuous(name="")+theme_classic()
+```
+
+```{r}
+tree2 <- rpart(Y~X1 + X2, method = "class",data=data2)
+rpart.plot(tree2)
+printcp(tree2)
+plotcp(tree2)
+```
+
+La principale difference ici, c'est comment est calculé l'impureté. Elle n'est pas la meme en regression et en classification. Pour le faire, on specifie class ou on transforme la variable Y en facteur. 
+Commentaire : Ici, dans chaque noeud, nous avons 03 valeurs 
+--> 0, 1 : le groupe prédit
+--> P(Y = 1/X est dans le groupe 0) = 0.07 <==> P(Y = 1/X >= 0.44)   
+
+Si parmi les variables explicatives, si on a une variable explicative qualitative à plusieurs modalités, comment faire les partitions sur ces variables ? ( On ne peut pas dire X < A ...), ainsi ce qu'on fait c'est qu'on fait l'ensemeble des partitions binaires de notre variable. 
+
+
+# 3.1.3 Entrée qualitative
+
+```{r}
+n <- 100
+X <- factor(rep(c("A","B","C","D"),n))
+set.seed(1234)
+Y[X=="A"] <- rbinom(sum(X=="A"),1,0.9)
+Y[X=="B"] <- rbinom(sum(X=="B"),1,0.25)
+Y[X=="C"] <- rbinom(sum(X=="C"),1,0.8)
+Y[X=="D"] <- rbinom(sum(X=="D"),1,0.2)
+Y <- as.factor(Y)
+data3 <- data.frame(X,Y)
+
+```
+
+
+
+```{r}
+tree3 <- rpart(Y ~., method = "class" ,data = data3)
+rpart.plot(tree3)
+```
+
+
+Il trouve que la meilleure coupure c'est AC contre BD
+
+
+# 3.2 Élagage
+
+```{r}
+library(ISLR)
+data(Carseats)
+summary(Carseats)
+```
+
+```{r}
+set.seed(123)
+arbre <- rpart(Sales ~., cp = 1.e-05, data = Carseats)
+rpart.plot(arbre)
+printcp(arbre)
+```
+
+Quand on fait un plot directement de l'arbre, il prend directement les 17e arbre. Regarder la suite de nsplit (nombre de coupure et c'est 17-16..., ça peut retirer 2 branches)
+
+rel error : c'est l'erreur d'ajustement
+          : ça commence toujours par 1 car on normalise par rapport à la racine
+          : elle est decroissante, plus je coupe, plus j'ajuste
+          
+xerror    : erreur de prévision (fait par defaut sur 10 blocs)
+          : elle est décroissante 
+          : On la trace pour choisir la complexité optimale
+          
+Selection du meilleur arbre
+
+```{r}
+library(tidyverse)
+cp_opt <- arbre$cptable%>%
+  as.data.frame()%>%
+  filter(xerror == min(xerror))%>%
+  select(CP)
+
+cp_opt
+```
+
+```{r}
+BestArbre <- rpart(Sales~., cp = cp_opt, data = Carseats)
+rpart.plot(BestArbre)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

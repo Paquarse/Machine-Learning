@@ -1,0 +1,203 @@
+---
+title: "Forets Aléatoire"
+author: "Pâquarse Delvich Van Mahouvi"
+date: "06/04/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr ::opts_chunk$set(comment=NA)
+```
+
+# Package
+
+```{r}
+library(kernlab)
+library(rsample)
+library(randomForest)
+```
+
+
+```{r}
+data(spam)
+set.seed(1234)
+spam <- spam[sample(nrow(spam)),]
+```
+
+B n'est pas un parametre important, il faut le prendre le plus grand possible (Théorie des grands nombre). Il nous assure la convergence des algorithme
+
+M : qui contrôle la profondeur des arbres, nombre d'observation dans un truc à partir duquel on ne coupe plus
+
+m : ensemble aléatoire de variable candidate à la coupure w
+
+# Exercice 5.2
+
+```{r}
+set.seed(1234)
+data_split <- initial_split(spam, prop = 3/4)
+spam.app <- training(data_split)
+spam.test  <- testing(data_split)
+```
+
+
+1. Entraîner une forêt aléatoire sur les données d’apprentissage uniquement en utilisant les paramètres par défaut de la fonction randomForest. Commente
+
+```{r}
+set.seed(1234)
+foret1 <- randomForest(type ~., data = spam.app)
+foret1
+```
+Number of trees : Nombre d'arbre --> 500
+No. of variables tried ar each split : mtry (le nombre de variable candidate pour chaque coupure) : 7
+OOB estimate of  error rate : Estimateur l'erreur de classification. Avec l'algorithme des forets aléatoires, c'est une alternative à la validation croisée pour estimer l'erreur de classification. Elle est basée sur le bootstrap. Il utilise les observations qui sont en dehors de l'arbre pour estimer la précsion de la foret. On deduit que cette méthode predit correctement 95% des spams. 
+
+nonspam spam class.error : matrice de confusion obtenu grace a l'algo
+
+Commentaire : il s'agit d'une foret de classication avec 500 arbees. Le parametre mtry vaut 7 et l'erreur OOB est de 5.7%
+
+2. Calculer les groupes prédits pour les individus de l’échantillon test et en déduire une estimation de l’erreur de classification.
+
+```{r}
+prev.class <- predict(foret1, newdata = spam.test)
+head(prev.class)
+mean(prev.class != spam.test$type)
+```
+3. Calculer les estimation de la probabilité de spam pour les individus de l’échantillon test
+
+```{r}
+prev.prob <- predict(foret1, newdata = spam.test, type ="prob")
+head(prev.prob)
+```
+
+4. Refaire les questions précédentes avec la fonction ranger du package ranger
+
+```{r}
+library(ranger)
+foret2 <- ranger(type ~ ., data = spam.app)
+foret2
+```
+1 : veut dire qu'il coupe l'arbre jusqu'a ce qu'il y ait moins d'une observation par feuille
+Splitrule : critère poiur découper les noeuds
+
+```{r}
+prev.class_ranger <- predict(foret2, data = spam.test)
+#head(prev.class_ranger)
+mean(prev.class_ranger$predictions != spam.test$type)
+```
+
+
+```{r}
+foret_prob_ranger <- ranger(type~., data = spam.app, probability = TRUE)
+ranger_prob <- predict(foret2, data = spam.test)
+head(ranger_prob$predictions)
+```
+5. 
+```{r}
+system.time(randomForest(type ~., data = spam.app))
+system.time(ranger(type ~., data = spam.app))
+```
+
+ranger est beaucoup plus facile
+
+# Exercice 5.2
+
+1. 
+```{r}
+set.seed(12345)
+library(OOBCurve)
+foret1 <- ranger(type~.,data=spam,keep.inbag=TRUE)
+spam.task <- mlr::makeClassifTask(data=spam,target="type")
+erreurs <- OOBCurve(foret1,measures = list(mmce, auc),
+                task=spam.task,data=spam)
+erreurs1 <- erreurs %>% as_tibble() %>% mutate(ntrees=1:500) %>% 
+  filter(ntrees>=5) %>%
+  pivot_longer(-ntrees,names_to="Erreur",values_to="valeur")  
+ggplot(erreurs1)+aes(x=ntrees,y=valeur)+geom_line()+
+  facet_wrap(~Erreur,scales="free")
+```
+Pour le choix de B. 
+
+2. Construire la forêt avec mtry=1 et comparer ses performances avec celle construite précédemment
+
+```{r}
+foret_mtry1 <- ranger(type~.,data=spam,keep.inbag=TRUE, mtry = 1)
+foret_mtry1
+```
+avec mtry = 1, l'erreur augmente, donc calibrer
+
+```{r}
+library(tidymodels)
+```
+
+1. Intialisation du workflow
+```{r}
+tune_spec <- rand_forest(mtry = tune(), min_n = tune())%>%
+  set_engine("ranger")%>%
+  set_mode("classification")
+
+rf_wf <- workflow()%>%
+  add_model(tune_spec)%>%
+  add_formula(type ~.)
+```
+
+2. Ré-echantillonnage et grille
+
+```{r}
+rf_grid <- expand.grid(mtry = c(1,6,seq(10,50,by=10),57), min_n = c(1,5,100,500))
+blocs <- vfold_cv(spam, v = 3)
+```
+
+
+3. Calcul
+```{r}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+rf_res <- rf_wf%>%
+  tune_grid(resamples = blocs, grid = rf_grid)
+
+system.time(rf_wf%>%
+  tune_grid(resamples = blocs, grid = rf_grid))
+
+stopCluster(cl)
+```
+
+```{r}
+rf_res%>%show_best("roc_auc")
+```
+
+```{r}
+rf_res%>%
+  collect_metrics()%>%
+  filter(.metric == "accuracy")%>%
+  mutate(min_n = as.factor(min_n), err_classif = 1-mean)%>%
+  ggplot() + aes(x = mtry, y = err_classif, color = min_n) + geom_line()
+```
+
+Boosting : on agrege des trucs qui marchent mal pour avoir des trucs bons. mtry c'est le plus important. 
+
+
+Finaliser l'ago
+
+```{r}
+foret_final <- rf_wf%>%
+  finalize_workflow(list(mtry = 7, min_n = 1))%>%
+  fit(data = spam)
+```
+
+
+4. Visualiser l'importance
+```{r}
+foret.imp <- ranger(type~., data = spam, importance = "impunity")
+foret.perm <- ranger(type~., data = spam, importance = "permutation")
+vip::vip(foret.imp)
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,176 @@
+---
+title: "Regression logistique"
+author: "Pâquarse Delvich Van Mahouvi"
+date: "2022-10-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr ::opts_chunk$set(comment=NA)
+```
+
+
+# 3. MODELISATION PREDICTIVE     
+
+```{r}
+fin2_train = fin2_train %>%
+  select(-cl_job2,-cl_education2,-cl_month2,-cl_nojob)
+fin2_test = fin2_test %>%
+  select(-cl_job2,-cl_education2,-cl_month2,-cl_nojob)
+```
+
+
+## ---------------------------
+## 3.3 REGRESSION LOGISTIQUE 
+## ---------------------------
+
+## Premier modele sans aucune selection
+## ------------------------------------
+logistic = glm(y ~.,
+               data = fin2_train,
+               family = "binomial")
+
+summary(logistic)
+# AIC: 1713 et beaucoup de variables non significatives
+
+## Second modele avec selection des variables avec step()
+## ------------------------------------------------------
+opti_glm <- step(logistic, trace = FALSE)
+summary(opti_glm)
+# AIC: 1694 mais qques modalites non significatives : cl_month(apr), cl_month(aug,nov) , cl_job(housemaid,self-employed,services)
+
+
+## En conclusion  ------------------------------------------------------------
+## Tester un regroupement de modalite sur la variables cl_month
+## Creer des variables dichotomques sur cl_job, cl_education 
+## Puis tester une nouvelle specification pour la regression logistique
+## --------------------------------------------------------------------------- 
+
+## Construction de nouvelles variables explicatives candidates
+## -----------------------------------------------------------
+# Creation de la fonction generant des tableaux croises avec des parametres par defaut
+fun_crosstable = function(df, var1, var2){
+  # df: dataframe containing both columns to cross
+  # var1, var2: columns to cross together.
+  CrossTable(df[, var1], df[, var2],
+             prop.r = T,
+             prop.c = F,
+             prop.t = F,
+             prop.chisq = F,
+             dnn = c(var1, var2))
+}
+
+# Applicaton de la fonction FUN_CROSSTABLE
+fun_crosstable(fin2_train, "cl_job", "y")
+fun_crosstable(fin2_train, "cl_month", "y")
+fun_crosstable(fin2_train, "cl_education", "y")
+
+# Regroupement de modalites sur les variables categorielles (librairie "forcats")
+
+fin2_train$cl_job2 <- fct_collapse(fin2_train$cl_job,
+                                   "technician,management,housemaid,self-employed,services"=c("technician","management","housemaid, self-employed,services"))
+fun_crosstable(fin2_train, "cl_job2", "y")
+
+
+fin2_train$cl_nojob <- ifelse(fin2_train$cl_job == 'student,retired,unemployed', 1, 0)
+fun_crosstable(fin2_train, "cl_nojob", "y")
+
+
+fin2_train$cl_education2 <- fct_collapse(fin2_train$cl_education,
+                                         "basic.6y,basic.9y,basic.4y"=c("basic.6y,basic.9y","basic.4y"),
+                                         "others" = c("high.school","professional.course","university.degree"))
+fun_crosstable(fin2_train, "cl_education2", "y")
+
+fin2_train$cl_month2 <- fct_collapse(fin2_train$cl_month,
+                                     "(05)may,(07)jul"=c("(05)may","(07)jul"),
+                                     "(06)jun,(08)aug,(11)nov" = c("(06)jun","(08)aug,(11)nov"),
+                                     "(03)mar,(09)sep,(10)oct,(12)dec,(04)apr" =c("(03)mar,(09)sep,(10)oct,(12)dec","(04)apr"))
+fun_crosstable(fin2_train, "cl_month2", "y")
+
+
+## Troisieme regression logistique
+## -------------------------------
+logistic = glm(y ~ contact + poutcome + cons.price.idx + euribor3m + cl_month2 + cl_campaign + cl_job2 ,
+               data = fin2_train,
+               family = binomial(link="logit"))
+
+summary(logistic)
+
+## Quatrieme regression logistique
+## -------------------------------
+logistic = glm(y ~ contact + poutcome + cons.price.idx + euribor3m + cl_campaign + cl_nojob + cl_month2,
+               data = fin2_train,
+               family = binomial(link="logit"))
+
+summary(logistic)
+
+## Specification retenue (modele 3)
+## --------------------------------
+logistic = glm(y ~ contact + poutcome + cons.price.idx + euribor3m + cl_month2 + cl_campaign + cl_job2 ,
+               data = fin2_train,
+               family = binomial(link="logit"))
+
+summary(logistic)
+# AIC: 1712 et toutes les modalites sont significatives a 12%
+
+
+# Application du modele sur la base TEST
+# --------------------------------------
+# Creation des 3 nouvelles variables categorielles dans la base TEST
+fin2_test$cl_job2 <- fct_collapse(fin2_test$cl_job,
+                                   "technician,management,housemaid,self-employed,services"=c("technician","management","housemaid, self-employed,services"))
+fun_crosstable(fin2_test, "cl_job2", "y")
+
+
+fin2_test$cl_nojob <- ifelse(fin2_test$cl_job == 'student,retired,unemployed', 1, 0)
+fun_crosstable(fin2_test, "cl_nojob", "y")
+
+fin2_test$cl_month2 <- fct_collapse(fin2_test$cl_month,
+                                    "(05)may,(07)jul"=c("(05)may","(07)jul"),
+                                    "(06)jun,(08)aug,(11)nov" = c("(06)jun","(08)aug,(11)nov"),
+                                    "(03)mar,(09)sep,(10)oct,(12)dec,(04)apr" =c("(03)mar,(09)sep,(10)oct,(12)dec","(04)apr"))
+fun_crosstable(fin2_test, "cl_month2", "y")
+
+fin2_test$cl_education2 <- fct_collapse(fin2_test$cl_education,
+                                        "basic.6y,basic.9y,basic.4y"=c("basic.6y,basic.9y","basic.4y"),
+                                        "others" = c("high.school","professional.course","university.degree"))
+fun_crosstable(fin2_test, "cl_education2", "y")
+
+# Matrice de confusion et indicateurs de performance (librairie "caret" ou "MLmetrics")
+# sur les echantillons TRAIN et TEST
+# -------------------------------------------------------------------------------------
+pred_LOGIT_Train <- predict(logistic, newdata=fin2_train, type="response", se.fit=T)
+confusionMatrix(factor(pred_LOGIT_Train$fit < 0.5,
+                       levels=c(TRUE, FALSE),
+                       labels=c("0","1")),
+                fin2_train$y,positive = "1")
+
+pred_LOGIT_Test <- predict(logistic, newdata=fin2_test, type="response", se.fit=T)
+confusionMatrix(factor(pred_LOGIT_Test$fit < 0.5,
+                       levels=c(TRUE, FALSE),
+                       labels=c("0","1")),
+                fin2_test$y,positive = "1")
+
+# Calcul de l'AUC et construction de la courbe ROC (librairie ROCR et pROC)
+# -------------------------------------------------------------------------
+pred <- predict(logistic, newdata=fin2_test, type = "response")
+table(fin2_test$y, pred>= 0.15)
+(897+20)/nrow(fin2_test)
+# 90.25% d'accuracy
+
+predic<-prediction(pred, fin2_test$y)
+# Creation de la courbe ROC
+roc<-performance(predic,"tpr","fpr")
+plot(roc,colorize=TRUE)
+title("ROC Curve")
+
+# Aire sous la courbe ROC
+auc<- performance(predic, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+# AUC = 0.7496
+
+
+
+

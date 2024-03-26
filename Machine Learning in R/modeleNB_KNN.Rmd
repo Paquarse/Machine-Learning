@@ -1,0 +1,296 @@
+---
+title: "Modèle Naif et K plus proche voisins"
+author: "Pâquarse Delvich Van Mahouvi"
+date: "2022-10-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr ::opts_chunk$set(comment=NA)
+```
+
+# Chargement des packages
+
+```{r}
+library(descr)
+library(ggplot2)
+library(psych)
+library(Hmisc)
+library(gmodels) # Cross Tables [CrossTable()]
+library(ggmosaic) # Mosaic plot with ggplot [geom_mosaic()]
+library(corrplot) # Correlation plot [corrplot()]
+library(ggpubr) # Arranging ggplots together [ggarrange()]
+library(cowplot) # Arranging ggplots together [plot_grid()]
+library(caret) # ML [train(), confusionMatrix(), createDataPartition(), varImp(), trainControl()]
+library(ROCR) # Model performance [performance(), prediction()]
+library(plotROC) # ROC Curve with ggplot [geom_roc()]
+library(pROC) # AUC computation [auc()]
+library(PRROC) # AUPR computation [pr.curve()]
+library(rpart) # Decision trees [rpart(), plotcp(), prune()]
+library(rpart.plot) # Decision trees plotting [rpart.plot()]
+library(ranger) # Optimized Random Forest [ranger()]
+#library(lightGBM) # Light GBM [lgb.train()]
+library(xgboost) # XGBoost [xgb.DMatrix(), xgb.train()]
+library(MLmetrics) # Custom metrics (F1 score for example)
+library(tidyverse) # Data manipulation
+library(forcats)
+library(tidyr)
+library(ggplot2)
+library(corrplot)
+library(cowplot)
+library(e1071)
+library(glmnet)
+library(rattle)
+library(randomForest)
+library(plotly)
+library(FactoMineR) 
+library(factoextra) 
+library(class) 
+library(dplyr)
+library(Metrics)
+library(rlang)
+```
+
+
+# 3.1 NAIVES BAYES (librarie "e01071")
+
+## Estimation du modèle naif
+
+```{r}
+NB <- naiveBayes(y ~., data = fin2_train, type="class")
+print(NB)
+```
+## Affichange du modèle 
+
+```{r}
+printALL=function(model){
+  trainPred=predict(model, newdata = fin2_train, type = "class")
+  trainTable=table(fin2_train$y, trainPred)
+  testPred=predict(NB, newdata=fin2_test, type="class")
+  testTable=table(fin2_test$y, testPred)
+  trainAcc=(trainTable[1,1]+trainTable[2,2])/sum(trainTable)
+  testAcc=(testTable[1,1]+testTable[2,2])/sum(testTable)
+  message("Contingency Table for Training Data")
+  print(trainTable)
+  message("Contingency Table for Test Data")
+  print(testTable)
+  message("Accuracy")
+  print(round(cbind(trainAccuracy=trainAcc, testAccuracy=testAcc),2))
+}
+printALL(NB)
+```
+
+## Evaluation du modele
+
+```{r}
+pred_NB_Test <- predict(NB, fin2_test, type="class")
+confusionMatrix(pred_NB_Test, fin2_test$y, positive = "1")
+```
+
+```{r}
+pred_NB_Train <- predict(NB, fin2_train, type="class")
+confusionMatrix(pred_NB_Train, fin2_train$y,positive = "1")
+```
+
+# 3.2 K-NN ou Plus Proches Voisins (librarie "class")
+
+Cette methode attend des predicteurs quantitatives. Nous allons utiliser les composantes principales issues de la PCA appliquee sur toutes les variables socio-economiques (quanti)
+
+## PCA sur les variables continues (librairie "FactoMineR")
+
+```{r}
+library(FactoMineR)
+```
+
+```{r}
+fin2_data_num = fin_data %>% select(age,cons.price.idx, cons.conf.idx, euribor3m, nr.employed)
+
+res.pca <- PCA(fin2_data_num, scale.unit=T, ncp=3, graph = F)
+```
+
+## Creation d'une table comportant les axes factoriels et la variable y
+
+```{r}
+fin2_PCA_coord <-as.data.frame(res.pca$ind$coord)
+fin2_PCA_coord$id <- 1:nrow(fin2_PCA_coord)
+fin2_PCA_coord$id <- as.character(fin2_PCA_coord$id)
+fin2_PCA_coord
+```
+## On remet la colonne id dans fin_data2 pour pouvoir faire la fusion
+
+```{r}
+fin_data2$id <- 1:nrow(fin_data2)
+fin_data2$id <- as.character(fin_data2$id)
+```
+
+## Jointure et choix des variables (devenues ici des axes factorielles)
+
+```{r}
+fin2.KNN <- inner_join(fin_data2, fin2_PCA_coord, by=NULL)
+fin2.KNN = fin2.KNN %>% select(y, Dim.1, Dim.2, Dim.3)
+```
+## Partitionnement
+
+```{r}
+set.seed(1234)
+ind = createDataPartition(fin2.KNN$y,
+                          times = 1,
+                          p = 0.75,
+                          list = F)
+fin2_KNN_train = fin2.KNN[ind, ]
+fin2_KNN_test = fin2.KNN[-ind, ]
+```
+
+## Verification de la representativite des echantillons
+
+```{r}
+Hmisc::describe(fin2_KNN_train$y)
+Hmisc::describe(fin2_KNN_test$y)
+```
+## Separation des predicteurs et de la variable Cible (y) dans l'apprentissage
+
+```{r}
+Xtrain <-fin2_KNN_train[,-1]
+Ytrain <- fin2_KNN_train[,1]
+```
+
+## Projection des individus sur le 1er plan factoriel avec la couleur de Y pour identifier le lien entre les X et la cible
+
+```{r}
+# Definir les couleurs des 2 modalites de y
+colors <- c("#00AFBB", "#E7B800")
+colors <- colors[(Ytrain)]
+
+# Definir les formes pour les 2 modalites de y
+shapes = c(16, 17) 
+shapes <- shapes[(Ytrain)]
+
+# Nuage de points en 3 dimensions (couleur pour les modalit?s de y)
+plot(x=Xtrain$Dim.1, y=Xtrain$Dim.2, frame=TRUE,
+     xlab="Dim1", ylab="Dim2", col=colors, pch=shapes)
+legend("topleft", legend=levels(Ytrain), col=c("#00AFBB", "#E7B800"), pch=c(16,17))
+
+plot(x=Xtrain$Dim.1, y=Xtrain$Dim.3, frame=TRUE,
+     xlab="Dim1", ylab="Dim3", col=colors, pch=shapes)
+legend("topleft", legend=levels(Ytrain), col=c("#00AFBB", "#E7B800"), pch=c(16,17))
+
+```
+
+## Evaluation du modèle
+
+### Separation des predicteurs et de la variable Cible (y) dans l'echantillon TEST
+
+```{r}
+Xtest <-fin2_KNN_test[,-1]
+Ytest <- fin2_KNN_test[,1]
+```
+
+### Algorithme des k-NN applique sur la base TEST (1016 obs) avec k=55
+
+#### Estimation du parametre k = sqrt(nb_obs_TRAIN)
+
+```{r}
+sqrt(NROW(Ytrain))
+```
+k = 55
+
+#### Estimation du modèle
+
+```{r}
+knn.55 <- knn(train=Xtrain, test=Xtest, cl=Ytrain, k=55)
+```
+
+####  Accurancy du modèle
+
+```{r}
+ACC.55 <- 100 * sum(Ytest == knn.55)/NROW(Ytest)
+ACC.55
+```
+Accurary = 88.88%
+
+#### Indicateurs de performance (avec caret)
+
+```{r}
+confusionMatrix(table(knn.55 ,Ytest), positive = "1")
+```
+
+### Optimisationde l'algorithme
+
+```{r}
+i=1
+k.optm=1
+for (i in 1:100){
+  knn.mod <- knn(train=Xtrain, test=Xtest, cl=Ytrain, k=i)
+  k.optm[i] <- 100 * sum(Ytest == knn.mod)/NROW(Ytest)
+  k=i
+  cat(k,'=',k.optm[i],'')
+}
+```
+
+# Graphique de l'accuracy 
+
+```{r}
+plot(k.optm, type="b", xlab="K- Value",ylab="Niveau d'accuracy")
+```
+
+Resultat : acucary optimal pour k=32
+
+### Algorithme des k-NN applique sur la base TEST (1016 obs) avec k=32 et calcul des indicateurs de performance -avec caret)
+
+```{r}
+knn.32 <- knn(train=Xtrain, test=Xtest, cl=Ytrain, k=32)
+confusionMatrix(table(knn.32 ,Ytest), positive = "1")
+
+knn.13 <- knn(train=Xtrain, test=Xtest, cl=Ytrain, k=13)
+confusionMatrix(table(knn.13 ,Ytest), positive = "1")
+
+knn.4 <- knn(train=Xtrain, test=Xtest, cl=Ytrain, k=4)
+confusionMatrix(table(knn.4 ,Ytest), positive = "1")
+```
+
+
+### AUC : Aire sous la courbe ROC 
+
+```{r}
+predic<-prediction(knn.13, Ytest$y)
+```
+
+
+# Courbe ROC
+```{r}
+roc<-performance(predic,"tpr","fpr")
+plot(roc,colorize=TRUE)
+title("ROC Curve")
+
+```
+
+# Aire sous la courbe ROC
+```{r}
+auc<- performance(predic, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+```
+
+
+
+## Conclusion sur K-NN -----------------------------------------------------------
+## Acuracy ameliore mais priviligie la specificite au detriment de la sensibilite
+## Preference pour K=4 mais les resultats reste peu pertinents
+## Peut servir de baseline pour evaluer la performance de modeles plus complexes
+## -------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
